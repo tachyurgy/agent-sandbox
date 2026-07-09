@@ -311,6 +311,25 @@ class LLMPolicy(Policy):
 # The episode loop
 # --------------------------------------------------------------------------
 
+def _ensure_logged_in(sess: "BrowserSession") -> bool:
+    """Establish an authenticated session up front.
+
+    A BUA harness pre-authenticates the browser so the agent's episode is spent
+    on the *task*, not credential entry (you don't RL-train a policy to type a
+    password). Login is confirmed before returning so a task never runs against a
+    silently logged-out session.
+    """
+    sess.navigate("/user/login")
+    try:
+        sess.page.fill('input[name="user_name"]', settings.admin_user)
+        sess.page.fill('input[name="password"]', settings.admin_password)
+        sess.page.click('form button:has-text("Sign In")')
+        sess.page.wait_for_load_state("networkidle")
+    except Exception:  # noqa: BLE001
+        pass
+    return "/user/login" not in sess.page.url
+
+
 def run_task(task, policy: Policy, headless: bool = True, max_steps: int = 12,
              shot_dir: Optional[str] = None) -> Trajectory:
     """Perceive → decide → act until the policy signals done or the budget runs out."""
@@ -318,7 +337,7 @@ def run_task(task, policy: Policy, headless: bool = True, max_steps: int = 12,
     sess = BrowserSession(headless=headless)
     sess.start()
     try:
-        sess.navigate(settings.base_url + "/user/login")
+        _ensure_logged_in(sess)
         for i in range(max_steps):
             obs = sess.observe()
             action = policy.act(task, obs, traj.steps)
